@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mystic Fortune Teller</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            text-align: center;
+            background-color: #1b1b1b;
+            color: #ffffff;
+        }
+
+        .screen {
+            display: none;
+            padding: 20px;
+        }
+
+        .visible {
+            display: block;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin-top: 20px;
+            background-color: #282828;
+            color: #ffffff;
+            border: 1px solid #00ffea;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #00ffea;
+            color: #000000;
+        }
+
+        #resultBox {
+            border: 1px solid #00ffea;
+            padding: 20px;
+            margin-top: 20px;
+            border-radius: 10px;
+            background-color: #121212;
+            color: #0ff;
+        }
+
+        h1 {
+            font-size: 3rem;
+            color: #0ff;
+            margin-bottom: 20px;
+        }
+
+        select {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 16px;
+            border: 1px solid #00ffea;
+            background-color: #282828;
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body>
+    <div id="titleScreen" class="screen visible">
+        <h1>Mystic Fortune Teller</h1>
+        <img src="placeholder.jpg" alt="Mystic Placeholder Image" style="max-width: 300px; margin: 20px auto;">
+        <button onclick="startFortuneTeller()">Start</button>
+    </div>
+
+    <div id="resultScreen" class="screen">
+        <h1>Your Fortune</h1>
+        <div id="resultBox">Loading...</div>
+        <select id="voiceSelect"></select>
+        <button onclick="restartApp()">Get Another Fortune</button>
+        <button onclick="speakFortune()">🔊 Hear Your Fortune</button>
+    </div>
+
+    <script>
+        const functionUrl = 'https://us-central1-tiborgai.cloudfunctions.net/openaiRequest';
+        let userData = { name: '', birthday: '', reason: '' };
+        let step = 0;
+        let isProcessingInput = false;
+        let voices = [];
+        const voiceSelect = document.getElementById('voiceSelect');
+
+        function log(message) {
+            console.log(`[DEBUG] ${message}`);
+        }
+
+        function startFortuneTeller() {
+            log("Starting the fortune teller...");
+            switchScreen('titleScreen', 'resultScreen');
+            populateVoiceList();
+            askQuestion("What is your name?");
+        }
+
+        function askQuestion(question) {
+            log(`Asking question: ${question}`);
+            isProcessingInput = true;
+
+            const utterance = new SpeechSynthesisUtterance(question);
+            utterance.voice = getSelectedVoice(); // Use the selected voice
+            utterance.onend = () => startSpeechRecognition();
+            speechSynthesis.speak(utterance);
+        }
+
+        function startSpeechRecognition() {
+            log("Starting speech recognition...");
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+
+            recognition.onresult = function (event) {
+                const transcript = event.results[0][0].transcript.trim();
+                log(`Speech recognition result: ${transcript}`);
+                recognition.stop();
+                handleResponse(transcript);
+            };
+
+            recognition.onerror = function (event) {
+                log(`Speech recognition error: ${event.error}`);
+                isProcessingInput = false;
+                askQuestion("I didn't catch that. Could you repeat?");
+            };
+
+            recognition.start();
+        }
+
+        function handleResponse(response) {
+            log(`Handling response for step ${step}: ${response}`);
+            if (step === 0) {
+                userData.name = response;
+                step++;
+                askQuestion("When is your birthday? Say it like month, day, year.");
+            } else if (step === 1) {
+                userData.birthday = response;
+                step++;
+                askQuestion("What would you like your fortune to be about? Love, career, or adventure?");
+            } else if (step === 2) {
+                userData.reason = response;
+                step++;
+                generateFortune();
+            }
+        }
+
+        function generateFortune() {
+            const prompt = `A user named ${userData.name}, born on ${userData.birthday}, seeks a fortune about ${userData.reason}. Write a mystical and concise fortune.`;
+            log(`Sending prompt to OpenAI: ${prompt}`);
+
+            document.getElementById('resultBox').textContent = 'Loading...';
+
+            fetch(functionUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt }),
+            })
+                .then(response => response.json())
+                .then(data => {
+                    log("Received response from OpenAI.");
+                    if (data.choices && data.choices.length > 0) {
+                        const fortune = data.choices[0].message.content;
+                        document.getElementById('resultBox').textContent = fortune;
+
+                        // Speak the fortune using browser TTS
+                        speakText(fortune);
+                    } else {
+                        log("No text returned from OpenAI.");
+                        document.getElementById('resultBox').textContent = 'No fortune available. Try again.';
+                    }
+                })
+                .catch(error => {
+                    log(`Error fetching fortune: ${error.message}`);
+                    document.getElementById('resultBox').textContent = 'Error fetching fortune. Please try again.';
+                });
+        }
+
+        function speakText(text) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.voice = getSelectedVoice(); // Use the selected voice
+            speechSynthesis.speak(utterance);
+        }
+
+        function speakFortune() {
+            const fortune = document.getElementById('resultBox').textContent.trim();
+            if (fortune) {
+                speakText(fortune);
+            }
+        }
+
+        function restartApp() {
+            log("Restarting app...");
+            step = 0;
+            userData = { name: '', birthday: '', reason: '' };
+            switchScreen('resultScreen', 'titleScreen');
+        }
+
+        function switchScreen(currentScreen, nextScreen) {
+            document.getElementById(currentScreen).classList.remove('visible');
+            document.getElementById(currentScreen).classList.add('screen');
+            document.getElementById(nextScreen).classList.add('visible');
+        }
+
+        function populateVoiceList() {
+            voices = speechSynthesis.getVoices();
+            voiceSelect.innerHTML = '';
+            voices.forEach((voice, index) => {
+                const option = document.createElement('option');
+                option.textContent = `${voice.name} (${voice.lang})`;
+                option.value = index;
+                voiceSelect.appendChild(option);
+            });
+        }
+
+        function getSelectedVoice() {
+            const selectedIndex = voiceSelect.value;
+            return voices[selectedIndex] || speechSynthesis.getVoices()[0];
+        }
+
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = populateVoiceList;
+        }
+    </script>
+</body>
+</html>
